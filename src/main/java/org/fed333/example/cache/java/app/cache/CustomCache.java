@@ -10,4 +10,6 @@ public interface CustomCache<K,V> {
 
     CacheStatistic getStatistic();
 
+    void setCapacity(int capacity);
+
 }

@@ -3,6 +3,7 @@ package org.fed333.example.cache.java.app.cache.impl;
 import lombok.extern.slf4j.Slf4j;
 import org.fed333.example.cache.java.app.cache.CacheStatistic;
 import org.fed333.example.cache.java.app.cache.CustomCache;
+import org.fed333.example.cache.java.app.cache.RemovalListener;
 import org.fed333.example.cache.java.app.entity.CacheValue;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -22,6 +23,8 @@ public class JavaLFUCache implements CustomCache<String, CacheValue> {
 
     private HashMap<Integer, LinkedHashSet<String>> frequencyKeys;//Counter and item list
 
+    private List<RemovalListener<String, CacheValue>> removalListeners;
+
     private int capacity;
 
     private int min = -1;
@@ -31,11 +34,16 @@ public class JavaLFUCache implements CustomCache<String, CacheValue> {
 
     @PostConstruct
     private void init() {
-        capacity = 100_000;
         cache = new HashMap<>();
         keyFrequency = new HashMap<>();
         frequencyKeys = new HashMap<>();
         frequencyKeys.put(1, new LinkedHashSet<>());
+        removalListeners = new LinkedList<>();
+        addOnRemoval(e->{
+            statistic.incrementEvictions();
+            log.info("Element: [key={}, value={}] has been evicted.", e.getKey(), e.getValue());
+        });
+        setCapacity(100_000);
     }
 
     @Override
@@ -94,16 +102,44 @@ public class JavaLFUCache implements CustomCache<String, CacheValue> {
             return;
         }
         if (cache.size() >= capacity) {
-            String evit = frequencyKeys.get(min).iterator().next();
-            frequencyKeys.get(min).remove(evit);
-            cache.remove(evit);
-            keyFrequency.remove(evit);
+            clearCache();
         }
         // If the key is new, insert the value and current min should be 1 of course
         cache.put(key, load(key));
         keyFrequency.put(key, 1);
         min = 1;
         frequencyKeys.get(1).add(key);
+    }
+
+    /**
+     * Clears a cache.<br>
+     * Removes one least frequently used cached element.<br>
+     * */
+    private void clearCache() {
+        String evictedKey = frequencyKeys.get(min).iterator().next();
+        frequencyKeys.get(min).remove(evictedKey);
+        CacheValue evictedValue = cache.remove(evictedKey);
+        keyFrequency.remove(evictedKey);
+        removalListeners.forEach(rl->rl.onRemoval(new AbstractMap.SimpleImmutableEntry<>(evictedKey, evictedValue)));
+    }
+
+    public void addOnRemoval(RemovalListener<String, CacheValue> onRemoval){
+        removalListeners.add(onRemoval);
+    }
+
+    @Override
+    public void setCapacity(int capacity) {
+        if (capacity < 0) {
+            throw new IllegalArgumentException("Capacity cannot be less than a zero!");
+        }
+        if (capacity > 100_000) {
+            throw new IllegalArgumentException("Capacity cannot be greater than 100000!");
+        }
+        this.capacity = capacity;
+        while(cache.size()>capacity) {
+            clearCache();
+        }
+
     }
 
 }
